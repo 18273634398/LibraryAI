@@ -12,12 +12,14 @@ import json
 import os
 import sys
 import tkinter
+from datetime import datetime
 
 from dashscope import Assistants, Messages, Runs
 from tools.multiple.picture.text2picture import text2picture
-from tools.AssistantAPI.tools.getBookInfo import getBookInfo
+from tools.AssistantAPI.tools.getBookInfo import getBookInfo,reserveBook
 from tools.AssistantAPI.tools.learnByWeb import learnByWeb
 from tools.AssistantAPI.tools.studyArea import getStudyArea,reserve,signout
+from tools.AssistantAPI.tools.root import getLibraryOperationReport
 from System.settings import generatedImageURL
 
 commands = {
@@ -34,6 +36,10 @@ prompt = ('你是智库书韵，一个智能图书馆人工智能助手，'
           '另外你需要持续学习用户的需求，若用户对某个文学类别，比如科幻小说很感兴趣，你可以主动向其推荐相关的书籍。'
           '以下信息可能对你有帮助：${document1}。')
 
+prompt_root =('你是智库书韵，一个专精于帮助图书馆管理员进行管理事务的助手'
+              '你的任务是帮助图书馆管理员管理图书馆，包括自动图书入库，借阅统计，生成借阅报告等事务。'
+              '你可以使用提供的知识库来回答用户的问题。'
+              '以下信息可能对你有帮助：${document1}。')
 
 def create_assistant(index_id_list: list):
     global commands, prompt
@@ -73,7 +79,7 @@ def create_assistant(index_id_list: list):
                     "name": "getBookInfo",
                     "description": "若遇到需要查询相关的问题，首先请调用rag检索本地数据库，若rag查询到数据，再调用该函数查询获取指定图书的详细信息(例如：作者、标识号或ISBN号、出版地或发行地、关键词、语种、分类、载体形态等)"
                                    "另外特别注意：由于你作为人工智能，你的训练集中的数据可能由于时间、空间等原因存在偏差，因此为了向用户提供真实准确的信息，你的开发者已经向你提供了一系列的知识库/数据库，因此如果与你的输出冲突，请你以数据库/知识库中的数据为准。"
-                                   "知识库/数据库中的知识信息（包括作者、标识号、ISBN号、出版地、发行地、分类、载体形态等）都是由管理员已经确认过的真实的，正确的，你应该无条件地相信与使用。",
+                                   "知识库/数据库中的知识信息（包括作者、标识号、ISBN号、出版地、发行地、分类、载体形态等）都是由管理员已经确认过的真实的，正确的，你应该无条件地相信与使用。若用户需要借阅或者归还某本图书，请调用reserveBook函数",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -83,6 +89,28 @@ def create_assistant(index_id_list: list):
                             }
                         },
                         "required": ["text"]
+                    }
+                }
+            },
+            # 预约与归还图书引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "reserveBook",
+                    "description": "当用户需要归还或者预定/借阅某本图书时，请调用该引擎",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "需要操作的图书的名称"
+                            },
+                            "operator":{
+                                "type": "number",
+                                "description": "预定或者归还操作，预定为1，归还为0"
+                            }
+                        },
+                        "required": ["name", "operator"]
                     }
                 }
             },
@@ -177,10 +205,137 @@ def create_assistant(index_id_list: list):
                         "required": ["text"]
                     }
                 }
+            },
+            # 时间获取引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "getTime",
+                    "description": "若用户询问当前的时间时请调用该引擎",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": []
+                    }
+                }
             }
         ]
     )
     print(f"Assistant {assistant.id} 创建成功！")
+    return assistant.id
+
+def create_assistant_root(index_id_list: list):
+    global commands, prompt_root
+    """创建一个辅助图书馆管理员管理图书馆的 Assistant。"""
+    assistant = Assistants.create(
+        model='qwen-plus',
+        name='辅助图书馆管理员进行管理事务的人工智能助手',
+        description='一个用于帮助图书馆管理员进行管理事务的助手',
+        instructions=prompt_root,
+        tools=[
+            # 知识库检索
+            {
+                "type": "rag",  # 指定使用RAG（检索增强生成）模式
+                "prompt_ra": {
+                    "pipeline_id": index_id_list,  # 指定使用的知识库索引ID
+                    "multiknowledge_rerank_top_n": 10,  # 多知识源重排序时返回的top N结果数
+                    "rerank_top_n": 5,  # 最终重排序后返回的top N结果数
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query_word": {
+                                "type": "str",
+                                "value": "${document1}"  # 使用动态占位符，将被实际查询内容替换
+                            }
+                        }
+                    }
+                }
+            },
+            # 代码解释器
+            {
+                'type': 'code_interpreter'  # 这是启用代码解释器的关键配置
+            },
+            # 搜索图书引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "getBookInfo",
+                    "description": "若遇到需要查询相关的问题，首先请调用rag检索本地数据库，若rag查询到数据，再调用该函数查询获取指定图书的详细信息(例如：作者、标识号或ISBN号、出版地或发行地、关键词、语种、分类、载体形态等)"
+                                   "另外特别注意：由于你作为人工智能，你的训练集中的数据可能由于时间、空间等原因存在偏差，因此为了向用户提供真实准确的信息，你的开发者已经向你提供了一系列的知识库/数据库，因此如果与你的输出冲突，请你以数据库/知识库中的数据为准。"
+                                   "知识库/数据库中的知识信息（包括作者、标识号、ISBN号、出版地、发行地、分类、载体形态等）都是由管理员已经确认过的真实的，正确的，你应该无条件地相信与使用。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "需要查找的图书的名称"
+                            }
+                        },
+                        "required": ["text"]
+                    }
+                }
+            },
+            # 自习室数据获取引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "getStudyArea",
+                    "description": "若图书馆管理员询问关于图书馆自习室或者有无空余自习室位置等有关问题，请调用该函数获取图书馆自习室的实时状态，并为其提供图书馆自习室运行情况的报告。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": []
+                    }
+                }
+            },
+            # 文档翻译引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "translate",
+                    "description":"当用户需要翻译文章、论文、期刊等的时候调用该引擎",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": []
+                    }
+                }
+            },
+            # 图书资源信息检索引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "getLibraryOperationReport",
+                    "description":"当图书馆管理员需要时查看图书馆运行情况、图书借阅情况、图书资源信息等，以及查看图书馆运行报告时请调用该引擎",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                            }
+                        },
+                    }
+                }
+            },
+            # 时间获取引擎
+            {
+                "type": "function",
+                "function": {
+                    "name": "getTime",
+                    "description": "若图书馆管理员询问当前的时间时请调用该引擎，并调用查看图书馆运行的getLibraryOperationReport,分析未来图书馆可能的人流量情况",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "required": []
+                    }
+                }
+            },
+        ]
+    )
+    print(f"Assistant（root) {assistant.id} 创建成功！")
     return assistant.id
 
 
@@ -218,6 +373,20 @@ def send_message(thread, assistant, message,windowsObject):
                     tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
                 )
                 print("[图书查询引擎]输出提交成功")
+                # 等待新的运行完成
+                run = Runs.wait(thread_id=thread.id, run_id=run.id)
+            elif tool_call.function.name == "reserveBook":
+                # 图书预约引擎
+                print("[图书预约引擎]被调用")
+                args = json.loads(tool_call.function.arguments)
+                print(args)
+                result = reserveBook(args["name"], args["operator"])
+                Runs.submit_tool_outputs(
+                    thread_id=thread.id,
+                    run_id=run.id,
+                    tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
+                )
+                print("[图书预约引擎]输出提交成功")
                 # 等待新的运行完成
                 run = Runs.wait(thread_id=thread.id, run_id=run.id)
             elif tool_call.function.name == "learnByWeb":
@@ -280,6 +449,7 @@ def send_message(thread, assistant, message,windowsObject):
                 run = Runs.wait(thread_id=thread.id, run_id=run.id)
             elif tool_call.function.name == "translate":
                 # 翻译引擎
+                print("[文档翻译引擎]被调用")
                 result = ("文献翻译功能使用指南："
                           "1.首先您需要准备好所需要翻译的文献的电子文档，如PDF、Word等格式。"
                           "2.打开智库书韵，点击主页面左下角的文件按钮，选择您需要上传的文件"
@@ -287,13 +457,15 @@ def send_message(thread, assistant, message,windowsObject):
                           )
                 Runs.submit_tool_outputs(
                     thread_id=thread.id,
-                     run_id=run.id,
-                     tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
+                    run_id=run.id,
+                    tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
                 )
+                print("[文档翻译引擎]输出提交成功")
                 # 等待新的运行完成
                 run = Runs.wait(thread_id=thread.id, run_id=run.id)
             elif tool_call.function.name == "text2picture":
                 # 文生图引擎
+                print("[文生图引擎]被调用")
                 args = json.loads(tool_call.function.arguments)
                 result = text2picture(args["text"])
                 Runs.submit_tool_outputs(
@@ -302,8 +474,37 @@ def send_message(thread, assistant, message,windowsObject):
                     tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
                 )
                 # 等待新的运行完成
+                print("[文生图引擎]输出提交成功")
                 run = Runs.wait(thread_id=thread.id, run_id=run.id)
                 windowsObject.receive_message(generatedImageURL)
+            elif tool_call.function.name == "getLibraryOperationReport":
+                # 图书馆运行报告获取引擎
+                print("[图书馆运行报告获取引擎]被调用")
+                result = getLibraryOperationReport()
+                Runs.submit_tool_outputs(
+                    thread_id=thread.id,
+                    run_id=run.id,
+                    tool_outputs=[{"tool_call_id": tool_call.id, "output": result}]
+                )
+                print("[图书馆运行报告获取引擎]输出提交成功")
+                # 等待新的运行完成
+                run = Runs.wait(thread_id=thread.id, run_id=run.id)
+            elif tool_call.function.name == "getTime":
+                # 时间获取引擎
+                print("[时间获取引擎]被调用")
+                # 获取当前日期和时间
+                current_datetime = datetime.now()
+                # 格式化日期和时间
+                formatted_datetime = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+                Runs.submit_tool_outputs(
+                    thread_id=thread.id,
+                    run_id=run.id,
+                    tool_outputs=[{"tool_call_id": tool_call.id, "output": f"当前时间为：{formatted_datetime}"}]
+                )
+                print("[时间获取引擎]输出提交成功")
+                # 等待新的运行完成
+                run = Runs.wait(thread_id=thread.id, run_id=run.id)
+
 
     # 获取 Assistant 的回复
     messages = Messages.list(thread_id=thread.id)
@@ -311,24 +512,6 @@ def send_message(thread, assistant, message,windowsObject):
         print(message)
         if message.role == "assistant":
             return message.content[0].text.value
-
-
-# 自定义交互功能
-def interact_with_assistant(assistant, thread, user_input):
-    if user_input.lower() == 'quit':
-        exit(0)
-
-    # 失败重传最大次数
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            send_message(thread, assistant, user_input)
-            break
-        except Exception as e:
-            if attempt < max_retries - 1:
-                print(f"发送消息失败，正在重试... (尝试 {attempt + 2}/{max_retries})")
-            else:
-                print(f"发送消息失败：{str(e)}。请稍后再试。")
 
 
 def Assistant(assistant_id):
@@ -341,6 +524,7 @@ def Assistant(assistant_id):
 
 if __name__ == '__main__':
     assistant_id = create_assistant(['l2c4jv7i9p', '36t16dh5er', 'tcpm27g3m5'])
-
+    assistant_id_root = create_assistant_root(['l2c4jv7i9p', '36t16dh5er', 'tcpm27g3m5'])
     Assistant(assistant_id)
+    Assistant(assistant_id_root)
     # 注意

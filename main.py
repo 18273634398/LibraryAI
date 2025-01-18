@@ -1,5 +1,7 @@
 import os
 import threading
+import time
+
 from dashscope import Threads
 from tkinter import filedialog, ttk
 from tools.AssistantAPI import Assistant
@@ -12,15 +14,13 @@ from tkhtmlview import HTMLText
 from tools.AssistantAPI.tools.translate import translate
 from tools.AssistantAPI.functions.uploadFile import upload, uploadTemp
 
-# 设置智库书韵助手ID
-Assistant_ID = 'asst_f6fd1fff-8d4d-4bee-ac90-f968a208e6be'
 
 class ChatApp:
-    global Assistant_ID
-    def __init__(self, root, thread, title='', subject=''):
+    def __init__(self, root, thread, Assistant_ID,title='', subject=''):
         self.root = root
         self.thread = thread
         self.root.title(title)
+        self.subject = subject
         self.root.geometry("1000x600")  # 窗口大小保持不变
         self.root.configure(bg="#e8f4fa")  # 设置整体背景颜色
         self.assistant = Assistant.Assistant(Assistant_ID)  # 初始化智库书韵助手
@@ -34,7 +34,7 @@ class ChatApp:
         self.other_avatar = ImageTk.PhotoImage(Image.open("./Resource/pic/Assistant.png").resize((50, 50)))
 
         # 聊天主题
-        self.chat_topic = tk.Label(root, text=subject, font=("黑体", 16), bg="#d1e8ff", fg="#333333", padx=10, pady=5)
+        self.chat_topic = tk.Label(root, text=self.subject, font=("黑体", 16), bg="#d1e8ff", fg="#333333", padx=10, pady=5)
         self.chat_topic.pack(fill=tk.X)
 
         # 创建聊天区域及滚动条
@@ -88,6 +88,12 @@ class ChatApp:
         self.send_button.pack(side=tk.RIGHT, padx=20, pady=10)
         self.root.update_idletasks()  # 强制更新窗口布局
 
+    def changeToRoot(self):
+        self.Assistant_ID = 'asst_f5320e9e-9b4a-4ccf-be35-bc5b11b2470e' # 更换为管理员的Assistant_ID
+        self.assistant = Assistant.Assistant(self.Assistant_ID)
+        self.subject = str(self.subject)+"(管理员)"
+        self.my_avatar = ImageTk.PhotoImage(Image.open("./Resource/pic/root.png").resize((50, 50)))
+        self.root.update_idletasks()  # 强制更新窗口布局
     def upload_file(self):
         def show_dialog():
             # 创建一个新的对话框
@@ -201,14 +207,29 @@ class ChatApp:
         """处理鼠标滚轮事件"""
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
+    def receive_message(self, msg):
+        if msg:
+            self.display_message(msg, "left")
+
     def send_message(self, event=None):
         msg = self.msg_entry.get()
         if msg:
             self.display_message(msg, "right")
             self.msg_entry.delete(0, tk.END)
-            self.toggle_info_label_visibility(True)
-            # 创建一个线程来处理消息接收
-            threading.Thread(target=self.async_receive_message, args=(msg,)).start()
+            # 检测特定输入
+            if msg.lower() == "root":
+                self.changeToRoot()
+                self.receive_message("已切换为管理员模式")
+            elif msg.lower() == "quit":
+                def quit_app():
+                    time.sleep(2)
+                    self.root.quit()
+                self.receive_message("再见，欢迎下次使用智库书韵！")
+                threading.Thread(target=quit_app).start()
+            else:
+                # 创建一个线程来处理消息接收
+                self.toggle_info_label_visibility(True)
+                threading.Thread(target=self.async_receive_message, args=(msg,)).start()
 
     def async_receive_message(self, msg):
         response = Assistant.send_message(self.thread, self.assistant, msg,self)
@@ -216,11 +237,6 @@ class ChatApp:
         # 语音回复
         # text = text2voice(response)
         self.toggle_info_label_visibility(False)
-
-    def receive_message(self, msg):
-        if msg:
-            self.display_message(msg, "left")
-
     def display_message(self, msg, side):
         # 创建一个新的Frame来放置时间戳、头像和气泡
         message_frame = Frame(self.messages_frame)
@@ -296,7 +312,7 @@ if __name__ == "__main__":
     try:
         root = tk.Tk()
         thread = Threads.create()
-        app = ChatApp(root, thread, title="聊天界面", subject="智库书韵")
+        app = ChatApp(root, thread,'asst_fc918e3d-8ba9-4526-9b74-ad897d84745f', "聊天界面", "智库书韵",)
         app.receive_message("你好，欢迎使用智库书韵！有什么图书问题，可以随时咨询我。\n比如：\n1. 如何使用智库书韵？\n2. 《三体》这本书怎么样？\n3.鲁尚武是谁？")
         root.mainloop()
     except Exception as e:

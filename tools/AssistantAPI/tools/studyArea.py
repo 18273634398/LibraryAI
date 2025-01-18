@@ -34,6 +34,8 @@ WHERE AreaName = '{name}' AND currentNum + {num} <= sumNum AND isOpen = 1;
         cursor.close()
         conn.close()
         if affected_rows > 0:
+            for i in range(num):
+                cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('预约自习室','{name}')")
             return f"【预约成功】自习室({name})预约成功，预约人数{num}人"
         else:
             return f"【预约失败】自习室({name})预约失败，可能是因为已经达到最大容量或自习室未开放"
@@ -60,6 +62,8 @@ WHERE AreaName = '{name}' AND currentNum - {num} >= 0 AND isOpen = 1;
         cursor.close()
         conn.close()
         if affected_rows > 0:
+            for i in range(num):
+                cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('签退自习室','{name}')")
             return f"【签退成功】自习室({name})签退成功，签退人数{num}人"
         else:
             return f"【签退失败】自习室({name})签退失败，可能是因为输入的人数大于当前预约人数或自习室未开放"

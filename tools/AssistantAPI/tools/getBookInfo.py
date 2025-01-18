@@ -9,7 +9,7 @@
 # ===========================================================================================================
 import random
 import re
-
+from tools.MySQL import cmd
 import requests
 from bs4 import BeautifulSoup
 
@@ -38,6 +38,13 @@ userAgents = [
     "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.11 (KHTML, like Gecko) Chrome/17.0.963.84 Safari/535.11 LBBROWSER",
 ]
 
+def getBookPosition(keyword):
+    """获取图书在图书馆的位置"""
+    result = cmd.sqlcmd(f"SELECT book_name, book_position FROM book_position WHERE book_name LIKE '%{keyword}%' LIMIT 5")
+    if result:
+        result = f"获取到与{keyword}相关图书的位置信息为：{result}"
+    return result
+
 
 def getDetailInfo(book_url):
     """获取图书详细信息"""
@@ -58,6 +65,7 @@ def getDetailInfo(book_url):
             for baseInfoItem in baseInfoItems:
                 baseInfo += baseInfoItem.get_text(strip=True)
             print("[图书搜索引擎]已获取图书基本信息")
+            print(url)
             # 提取详细信息
             detailInfo = soup.find('div', id='detail-info', class_='book_na_bottom show')
             detailInfoItems = detailInfo.findAll('div', class_='book_item')
@@ -65,6 +73,7 @@ def getDetailInfo(book_url):
             for detailInfoItem in detailInfoItems:
                 detailInfo += detailInfoItem.get_text(strip=True)
             print("[图书搜索引擎]已获取图书详细信息")
+            print(baseInfo + detailInfo) # 测试
             Doc.append(baseInfo + detailInfo)
 
         except Exception as e:
@@ -72,86 +81,134 @@ def getDetailInfo(book_url):
     return Doc
 
 
-def getBookInfoByWeb(model, keyword, source = 1):
+def getBookInfoByWeb(model, keyword):
     """以指定源模式 通过网络获取图书的URL并传给getDetailInfo()函数解析后返回图书信息文档DOoc"""
-    if source == 1:
-        url = f'http://find.nlc.cn/search/doSearch?query={keyword}&secQuery=&actualQuery={keyword}&searchType=2&docType=%E5%85%A8%E9%83%A8&isGroup=isGroup&targetFieldLog=%E5%85%A8%E9%83%A8%E5%AD%97%E6%AE%B5&orderBy=RELATIVE&fromHome=true'
-        headers = {
-            'User-Agent': userAgents[random.randint(0, len(userAgents) - 1)],
-            'Connection': 'keep-alive',
-            'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2'
-        }
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        book_list_temp = soup.find('div', class_='article_list')
-        book_list = book_list_temp.find_all('div', class_='article_item')
-        # 存储指定书目的URL
-        book_url = []
-        # 解析每本书的URL
-        def getHref(soup):
-            '''传入书目的div元素，返回该书目的URL'''
-            bookUrl = soup.find('a', onclick=re.compile(r'makeDetailUrl'))
-            # 提取 onclick 属性值
-            onclick_value = bookUrl.get('onclick')
-            # 使用正则表达式提取参数
-            params = re.findall(r"'(.*?)'", onclick_value)
-            # 拼接 URL
-            base_url = params[1]
-            dataSource = params[2]
-            query = params[3]
-            url = f'http://find.nlc.cn/search/showDocDetails?docId={base_url}&dataSource={dataSource}&query={query}'
-            return url
+    url = f'http://find.nlc.cn/search/doSearch?query={keyword}&secQuery=&actualQuery={keyword}&searchType=2&docType=%E5%85%A8%E9%83%A8&isGroup=isGroup&targetFieldLog=%E5%85%A8%E9%83%A8%E5%AD%97%E6%AE%B5&orderBy=RELATIVE&fromHome=true'
+    headers = {
+        'User-Agent': userAgents[random.randint(0, len(userAgents) - 1)],
+        'Connection': 'keep-alive',
+        'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2'
+    }
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    book_list_temp = soup.find('div', class_='article_list')
+    book_list = book_list_temp.find_all('div', class_='article_item')
+    # 存储指定书目的URL
+    book_url = []
+    # 解析每本书的URL
+    def getHref(soup):
+        '''传入书目的div元素，返回该书目的URL'''
+        bookUrl = soup.find('a', onclick=re.compile(r'makeDetailUrl'))
+        # 提取 onclick 属性值
+        onclick_value = bookUrl.get('onclick')
+        # 使用正则表达式提取参数
+        params = re.findall(r"'(.*?)'", onclick_value)
+        # 拼接 URL
+        base_url = params[1]
+        dataSource = params[2]
+        query = params[3]
+        url = f'http://find.nlc.cn/search/showDocDetails?docId={base_url}&dataSource={dataSource}&query={query}'
+        return url
 
-        # 以书名的形式查找
-        # 该模式下仅仅返回第一条搜索结果（最近似）
-        if model == 1:
-            book_url.append(getHref(book_list[0]))
-        elif model == 2:
-            # 以作者的形式查找
-            # 该模式下返回前10条搜索结果
-            for book in book_list[0:10]:
-                book_url.append(getHref(book))
-        Doc = getDetailInfo(book_url)
-        if Doc:
-            print("[图书搜索引擎]已获取图书信息")
-            return Doc
-        else:
-            print("未找到相关图书")
-            return "未找到相关图书"
-    # elif source == 2:
-    #     # 使用其他源用于进行模糊搜索并提取ISBN号
-    #     url = f'https://search.datacdn.cn/sbooklist?name=pdfrsteam&q={keyword}=_all'
-    #     headers = {
-    #         'User-Agent': userAgents[random.randint(0, len(userAgents) - 1)],
-    #         'Connection': 'keep-alive',
-    #         'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2'
-    #     }
-    #     response = requests.get(url, headers=headers)
-    #     soup = BeautifulSoup(response.text, 'html.parser')
-    #     book_list = soup.find('div', class_='pay-content shadowbox').find('div', class_='intro')
-    #     book_list_items = book_list.findAll('div', class_='content')
+    # 该模式下仅仅返回第一条搜索结果（最近似）
+    if model == 1:
+        book_url.append(getHref(book_list[0]))
+    elif model == 2:
+        # 该模式下返回前3条搜索结果
+        for book in book_list[0:3]:
+            book_url.append(getHref(book))
+    Doc = getDetailInfo(book_url)
+    if Doc:
+        print("[图书搜索引擎]已获取图书信息")
+        positionInfo = getBookPosition(keyword)
+        if positionInfo:
+            Doc.append(positionInfo)
+        return Doc
+    else:
+        print("未找到相关图书")
+        return "未找到相关图书"
 
 
 
 
-
-
-def getBookInfo(model,text,retries=False):
+def getBookInfo(model,text):
     """获取指定图书的详细信息(包括作者、标识号或ISBN号、出版地或发行地、关键词、语种、分类、载体形态等)"""
-    # retries: 是否因为准确搜索导致无结果发起重试过
     try:
         print(f"[图书搜索引擎]正在搜索{text}相关图书信息")
         result = getBookInfoByWeb(model,text)
         return result
     except Exception as e:
-        # try:
-        #     if  "'NoneType'" in str(e) and retries == False:
-        #         print(f"[图书搜索引擎]换源搜索{text}相关图书信息")
-        #         result = getBookInfoByWeb(model,text,2)
-        #         return result
-        # except Exception as e:
-        #     return f"服务器错误，原因:{e}"
         return f"服务器错误，原因:{e}"
 
+# 预约图书或归还图书 当model=0时为归还
+def reserveBook(book_name, model=1):
+    from System.settings import host, user, password, database
+    import pymysql
+    """预约图书或归还图书"""
+    try:
+        # 连接到 MySQL 数据库
+        connection = pymysql.connect(
+            host=host,
+            user=user,
+            password=password,
+            db=database,
+            cursorclass=pymysql.cursors.DictCursor
+        )
+
+        with connection.cursor() as cursor:
+            if model == 1:  # 预约图书
+                # 查询书的剩余数目
+                query = "SELECT book_number FROM book_position WHERE book_name = %s"
+                cursor.execute(query, (book_name,))
+
+                # 获取查询结果
+                result = cursor.fetchone()
+
+                if result :
+                    book_number = result['book_number']
+
+                    if book_number > 0:  # 如果有书可以借
+                        # 将剩余数目减 1
+                        update_query = "UPDATE book_position SET book_number = book_number - 1 WHERE book_name = %s"
+                        cursor.execute(update_query, (book_name,))
+
+                        # 提交事务
+                        connection.commit()
+                        cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('借书','{book_name}')")
+                        return f"已成功借阅{book_name}"
+                    else:
+                        cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('异常','无法借阅{book_name}，原因：暂无多余可借阅图书，该书的所有书籍均已被借出')")
+                        return f"借阅{book_name}失败，原因：当前暂无多余可借阅图书，该书的所有书籍均已被借出"
+                else:
+                    cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('异常','用户无法借阅{book_name}，原因是这本书暂时未入库')")
+                    return f"借阅{book_name}失败，该图书暂未入库，请等待管理员添加"
+
+            elif model == 0:  # 归还图书
+                # 增加书的数量
+                update_query = "UPDATE book_position SET book_number = book_number + 1 WHERE book_name = %s"
+                cursor.execute(update_query, (book_name,))
+
+                # 提交事务
+                connection.commit()
+                cmd.sqlcmd(f"INSERT INTO library_operations(operation_type, content) VALUES ('还书','{book_name}')")
+                return f"已成功归还{book_name}"
+
+            else:
+                print("Invalid model value. Use 1 for borrowing and 0 for returning.")
+                return f"归还图书{book_name}失败，原因：无效的操作类型"
+
+    except pymysql.MySQLError as error:
+        print("Error while connecting to MySQL", error)
+        return False
+    finally:
+        if connection:
+            connection.close()
+            print("MySQL connection is closed")
+
+
 if __name__ == '__main__':
-    getBookInfoByWeb(1, '刘慈欣')
+    # getBookInfoByWeb(1, '三体')
+    # print(getBookPosition('三体'))
+    # getBookInfoPlus('三体',10)
+    reserveBook('三体',0)
+
